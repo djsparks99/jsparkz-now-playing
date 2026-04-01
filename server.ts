@@ -28,16 +28,19 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
   try {
     const form = new FormData();
     form.append('api_token', AUDD_API_TOKEN);
-    form.append('audio', req.file.buffer, { filename: 'sample.webm', contentType: 'audio/webm' });
+    // Explicitly set filename and content type for AudD
+    form.append('file', req.file.buffer, { filename: 'sample.webm', contentType: 'audio/webm' });
     form.append('return', 'apple_music'); 
 
+    // Explicitly set the Content-Type header to multipart/form-data
     const response = await axios.post('https://api.audd.io/', form, {
-      headers: form.getHeaders()
+      headers: {
+        ...form.getHeaders(),
+        'Content-Type': 'multipart/form-data'
+      }
     });
 
     const result = response.data;
-    
-    // Print EXACTLY what AudD says to the Render logs
     console.log("AudD Response:", JSON.stringify(result));
     
     if (result && result.status === 'success' && result.result) {
