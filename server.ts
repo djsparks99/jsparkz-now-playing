@@ -2,92 +2,74 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import FormData from 'form-data';
-import crypto from 'crypto';
 import multer from 'multer';
 
 const app = express();
 
-// Allow all origins (This fixes the CORS error!)
+// The ultimate CORS fix
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['*'],
+  credentials: false
 }));
+app.options('*', cors());
 app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Get keys from Render environment variables
-const config = {
-  acrHost: process.env.ACRCLOUD_HOST || '',
-  acrAccessKey: process.env.ACRCLOUD_ACCESS_KEY || '',
-  acrAccessSecret: process.env.ACRCLOUD_ACCESS_SECRET || '',
-};
+// Get the AudD API Token from Render
+const AUDD_API_TOKEN = process.env.AUDD_API_TOKEN || '';
 
-function buildStringToSign(method: string, uri: string, accessKey: string, dataType: string, signatureVersion: string, timestamp: number) {
-  return [method, uri, accessKey, dataType, signatureVersion, timestamp].join('\n');
-}
-
-function sign(signString: string, accessSecret: string) {
-  return crypto.createHmac('sha1', accessSecret)
-    .update(Buffer.from(signString, 'utf-8'))
-    .digest().toString('base64');
-}
-
-async function getITunesData(title: string, artist: string) {
-  try {
-    const query = encodeURIComponent(`${title} ${artist}`);
-    const res = await axios.get(`https://itunes.apple.com/search?term=${query}&media=music&entity=song&limit=1`);
-    if (res.data.results && res.data.results.length > 0) {
-      const track = res.data.results[0];
-      return {
-        coverArt: track.artworkUrl100 ? track.artworkUrl100.replace('100x100bb', '512x512bb') : null,
-      };
-    }
-  } catch (e: any) {
-    console.error('iTunes API error:', e.message);
-  }
-  return null;
-}
+app.get('/api/test', (req, res) => {
+  res.json({ status: 'Server is alive and ready for AudD.io!' });
+});
 
 app.post('/api/identify', upload.single('audio'), async (req, res) => {
+  console.log("Received audio for AudD identification!");
+  
   if (!req.file) return res.status(400).json({ success: false, message: 'No audio file provided' });
-  if (!config.acrHost) return res.status(400).json({ success: false, message: 'ACRCloud not configured' });
+  if (!AUDD_API_TOKEN) return res.status(400).json({ success: false, message: 'AudD API Token not configured' });
 
   try {
-    const currentData = new Date();
-    const timestamp = Math.floor(currentData.getTime() / 1000);
-    const stringToSign = buildStringToSign('POST', '/v1/identify', config.acrAccessKey, 'audio', '1', timestamp);
-    const signature = sign(stringToSign, config.acrAccessSecret);
-
     const form = new FormData();
-    form.append('sample', req.file.buffer, { filename: 'sample.webm', contentType: 'audio/webm' });
-    form.append('access_key', config.acrAccessKey);
-    form.append('data_type', 'audio');
-    form.append('signature_version', '1');
-    form.append('signature', signature);
-    form.append('sample_bytes', req.file.buffer.length);
-    form.append('timestamp', timestamp);
+    form.append('api_token', AUDD_API_TOKEN);
+    form.append('audio', req.file.buffer, { filename: 'sample.webm', contentType: 'audio/webm' });
+    
+    // Tell AudD to automatically grab the high-quality Apple Music artwork for us!
+    form.append('return', 'apple_music'); 
 
-    const response = await axios.post(`https://${config.acrHost}/v1/identify`, form, {
+    const response = await axios.post('https://api.audd.io/', form, {
       headers: form.getHeaders()
     });
 
     const result = response.data;
-    if (result && result.status && result.status.code === 0) {
-      const music = result.metadata?.music?.[0];
-      if (music) {
-        const title = music.title;
-        const artist = music.artists?.map((a: any) => a.name).join(', ') || 'Unknown Artist';
-        const itunesData = await getITunesData(title, artist);
-        
-        return res.json({ 
-          success: true, 
-          song: { title, artist, itunesData } 
-        });
+    
+    if (result && result.status === 'success' && result.result) {
+      const title = result.result.title;
+      const artist = result.result.artist;
+      
+      // Format the Apple Music artwork URL to be 512x512 pixels
+      let coverArt = null;
+      if (result.result.apple_music && result.result.apple_music.artwork) {
+          coverArt = result.result.apple_music.artwork.url.replace('{w}', '512').replace('{h}', '512');
       }
+
+      console.log(`Identified: ${title} by ${artist}`);
+      
+      // Send it back to Owncast in the exact same format we used before!
+      return res.json({ 
+        success: true, 
+        song: { 
+            title, 
+            artist, 
+            itunesData: { coverArt } 
+        } 
+      });
     }
+    
+    console.log("No match found by AudD.");
     res.json({ success: false, message: 'No match found' });
   } catch (error: any) {
     console.error('Identify error:', error.message);
@@ -95,6 +77,6 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend running on port ${PORT}`);
 });
