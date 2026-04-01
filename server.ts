@@ -19,6 +19,68 @@ const upload = multer({ storage: multer.memoryStorage() });
 const PORT = process.env.PORT || 10000;
 const AUDD_API_TOKEN = process.env.AUDD_API_TOKEN || '';
 
+// ==========================================
+// 1. CHAT BOT LOGIC
+// ==========================================
+const OWNCAST_URL = process.env.OWNCAST_URL || ''; 
+const OWNCAST_TOKEN = process.env.OWNCAST_TOKEN || '';
+
+// Edit these to whatever names and messages you want!
+const fakeNames = ["Junglist99", "BassHead", "RaverUK", "DnB_Junkie", "SparkzFan", "AmenBreakz", "UKF_fan", "Rollerz"];
+const fakeMessages = [
+    "Sick drop! 🔥", 
+    "Yoooo this is heavy", 
+    "Rewind!! ⏪", 
+    "Big up the DJ", 
+    "Tune!", 
+    "Vibes 🔊", 
+    "Nasty bassline", 
+    "Let's gooo",
+    "Absolute belter",
+    "🔥🔥🔥"
+];
+
+function sendFakeChat() {
+    if (!OWNCAST_URL || !OWNCAST_TOKEN) return;
+    
+    const name = fakeNames[Math.floor(Math.random() * fakeNames.length)];
+    const msg = fakeMessages[Math.floor(Math.random() * fakeMessages.length)];
+    const baseUrl = OWNCAST_URL.replace(/\/$/, '');
+
+    axios.post(`${baseUrl}/api/integrations/chat/send`, {
+        author: name,
+        body: msg
+    }, {
+        headers: { 
+            'Authorization': `Bearer ${OWNCAST_TOKEN}`,
+            'Content-Type': 'application/json'
+        }
+    }).then(() => {
+        console.log(`Fake chat sent: [${name}] ${msg}`);
+    }).catch(err => {
+        console.log("Chat bot error:", err.message);
+    });
+}
+
+function scheduleNextMessage() {
+    if (!OWNCAST_URL || !OWNCAST_TOKEN) return;
+    
+    // Pick a random time between 2 minutes (120000ms) and 7 minutes (420000ms)
+    const nextTime = Math.floor(Math.random() * (420000 - 120000)) + 120000;
+    
+    setTimeout(() => {
+        sendFakeChat();
+        scheduleNextMessage(); // Loop it forever
+    }, nextTime);
+}
+
+// Start the bot loop
+scheduleNextMessage();
+
+
+// ==========================================
+// 2. AUDD NOW PLAYING LOGIC
+// ==========================================
 app.post('/api/identify', upload.single('audio'), async (req, res) => {
   console.log("Received audio for AudD identification!");
   
@@ -28,11 +90,9 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
   try {
     const form = new FormData();
     form.append('api_token', AUDD_API_TOKEN);
-    // Explicitly set filename and content type for AudD
     form.append('file', req.file.buffer, { filename: 'sample.webm', contentType: 'audio/webm' });
     form.append('return', 'apple_music'); 
 
-    // Explicitly set the Content-Type header to multipart/form-data
     const response = await axios.post('https://api.audd.io/', form, {
       headers: {
         ...form.getHeaders(),
@@ -41,7 +101,6 @@ app.post('/api/identify', upload.single('audio'), async (req, res) => {
     });
 
     const result = response.data;
-    console.log("AudD Response:", JSON.stringify(result));
     
     if (result && result.status === 'success' && result.result) {
       const title = result.result.title;
